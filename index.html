@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="PillSync — Smart medication management for elderly patients and caregivers. Never miss a dose again." />
   <meta name="theme-color" content="#5B8A72" />
-  <title>PillSync — Smart Pill Dispenser</title>
+  <title>PillDispenser — Smart Pill Dispenser</title>
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -38,7 +38,7 @@
           </svg>
         </div>
         <div class="brand-text">
-          <span class="brand-name">PillSync</span>
+          <span class="brand-name">PillDispneser</span>
           <span class="brand-tagline">Medication Manager</span>
         </div>
       </div>
@@ -152,7 +152,13 @@
   <!-- ─── Toast Container ─── -->
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-  <!-- ─── Scripts (order matters — no modules, global scope) ─── -->
+  <!-- ─── Scripts (order matters) ─── -->
+  <!-- firebase.js is type="module" — browser defers it automatically.
+       It sets up onAuthStateChanged, then dispatches 'FirebaseReady'.
+       app.js listens for 'FirebaseReady' before calling Router.init(). -->
+  <script type="module" src="js/firebase.js"></script>
+
+  <!-- Classic global scripts loaded synchronously before DOMContentLoaded -->
   <script src="js/data.js"></script>
   <script src="js/state.js"></script>
   <script src="js/theme.js"></script>

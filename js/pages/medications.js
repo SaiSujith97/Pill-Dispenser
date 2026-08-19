@@ -2,10 +2,10 @@
    Page: Medications
    ═════════════════════════════ */
 
-let _medsView = 'grid';
+let _medsView   = 'grid';
+let _medsUnsub  = null;
 
 function renderMedications() {
-  const medicines = AppState.get('medicines');
   _medsView = AppState.get('medsView') || 'grid';
 
   return `
@@ -15,7 +15,7 @@ function renderMedications() {
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:var(--space-3);">
       <div>
         <h1 class="page-title">Medications</h1>
-        <p class="page-subtitle">${medicines.length} active medications</p>
+        <p class="page-subtitle" id="meds-count">Loading…</p>
       </div>
       <div class="med-header-actions">
         <!-- View toggle -->
@@ -36,9 +36,9 @@ function renderMedications() {
     </div>
   </div>
 
-  <!-- Med content -->
+  <!-- Med content (skeleton while loading) -->
   <div id="med-content">
-    ${renderMedContent(medicines, _medsView)}
+    ${_renderMedsSkeleton()}
   </div>
 
   <!-- FAB (mobile) -->
@@ -48,6 +48,17 @@ function renderMedications() {
 
 </div>
   `;
+}
+
+function _renderMedsSkeleton() {
+  if (_medsView === 'list') {
+    return `<div class="med-list-view">
+      ${[1,2,3].map(() => `<div class="skeleton" style="height:72px;border-radius:var(--radius-lg);margin-bottom:var(--space-3);"></div>`).join('')}
+    </div>`;
+  }
+  return `<div class="med-grid">
+    ${[1,2,3].map(() => `<div class="skeleton" style="height:200px;border-radius:var(--radius-xl);"></div>`).join('')}
+  </div>`;
 }
 
 function renderMedContent(medicines, view) {
@@ -76,22 +87,22 @@ function renderMedCard(med) {
   const isLow = med.pillCount !== undefined && med.pillCount < 15;
   return `
   <div class="card med-card card-hover" data-med-id="${med.id}">
-    <div class="med-card-color-strip" style="background:${med.color};" aria-hidden="true"></div>
+    <div class="med-card-color-strip" style="background:${med.color || '#5B8A72'};" aria-hidden="true"></div>
     <div class="med-card-header">
       <div>
         <h3 class="med-card-name">${med.name}</h3>
         <div class="med-card-dosage">${med.dosage}</div>
       </div>
-      <div class="compartment-badge" style="background:${med.color};" aria-label="Compartment ${med.compartment}">${med.compartment}</div>
+      <div class="compartment-badge" style="background:${med.color || '#5B8A72'};" aria-label="Compartment ${med.compartment}">${med.compartment || '—'}</div>
     </div>
-    <p class="med-card-purpose">${med.purpose}</p>
+    <p class="med-card-purpose">${med.purpose || ''}</p>
     <div class="med-card-meta">
       <span class="badge badge-accent">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        ${med.times.map(t => formatTime12(t)).join(', ')}
+        ${(med.times || ['08:00']).map(t => formatTime12(t)).join(', ')}
       </span>
       <span class="badge badge-info">
-        ${freqLabel(med.frequency)}
+        ${freqLabel(med.frequency || 'once-daily')}
       </span>
     </div>
     ${isLow ? `<div class="low-supply">
@@ -114,12 +125,12 @@ function renderMedCard(med) {
 function renderMedListItem(med) {
   return `
   <div class="med-list-item" data-med-id="${med.id}">
-    <div class="med-list-color" style="background:${med.color};" aria-hidden="true"></div>
-    <div class="compartment-badge" style="background:${med.color}; width:36px; height:36px;" aria-label="Compartment ${med.compartment}">${med.compartment}</div>
+    <div class="med-list-color" style="background:${med.color || '#5B8A72'};" aria-hidden="true"></div>
+    <div class="compartment-badge" style="background:${med.color || '#5B8A72'}; width:36px; height:36px;" aria-label="Compartment ${med.compartment}">${med.compartment || '—'}</div>
     <div class="med-list-info">
       <div class="med-list-name">${med.name} <span style="color:var(--text-muted); font-weight:400;">${med.dosage}</span></div>
-      <div class="med-list-detail">${med.times.map(t => formatTime12(t)).join(', ')} · ${freqLabel(med.frequency)}</div>
-      <div class="med-list-detail" style="color:var(--text-muted); font-size:var(--text-xs);">${med.purpose}</div>
+      <div class="med-list-detail">${(med.times || ['08:00']).map(t => formatTime12(t)).join(', ')} · ${freqLabel(med.frequency || 'once-daily')}</div>
+      <div class="med-list-detail" style="color:var(--text-muted); font-size:var(--text-xs);">${med.purpose || ''}</div>
     </div>
     <div class="med-list-actions">
       <button class="icon-btn med-edit-btn" data-med-id="${med.id}" aria-label="Edit ${med.name}">
@@ -133,6 +144,9 @@ function renderMedListItem(med) {
 }
 
 function initMedications() {
+  const uid        = AppState.getCurrentUid();
+  const isDemoMode = AppState.get('isDemoMode');
+
   /* View toggles */
   document.getElementById('view-grid-btn').addEventListener('click', () => setMedView('grid'));
   document.getElementById('view-list-btn').addEventListener('click', () => setMedView('list'));
@@ -152,11 +166,44 @@ function initMedications() {
 
   /* Show header button on wider screens */
   _checkHeaderBtn();
+
+  /* ── Data source ── */
+  if (isDemoMode) {
+    /* Demo: render from AppState mock data */
+    _refreshMedUI(AppState.get('medicines'));
+    return;
+  }
+
+  if (!uid) {
+    window.location.hash = '#landing';
+    return;
+  }
+
+  /* Real: subscribe to Firestore */
+  const unsub = FirebaseDB.getMedicines(uid, (err, medicines) => {
+    if (err) {
+      console.error('Medicines snapshot error:', err);
+      Toast.show('Could not load your medications. Check your connection.', 'error');
+      return;
+    }
+    AppState.set('medicines', medicines);
+    _refreshMedUI(medicines);
+  });
+  AppState.registerListener('medications-list', unsub);
+  _medsUnsub = unsub;
+}
+
+function _refreshMedUI(medicines) {
+  const countEl = document.getElementById('meds-count');
+  if (countEl) countEl.textContent = `${medicines.length} active medication${medicines.length !== 1 ? 's' : ''}`;
+  const content = document.getElementById('med-content');
+  if (content) content.innerHTML = renderMedContent(medicines, _medsView);
+  _checkHeaderBtn();
 }
 
 function _checkHeaderBtn() {
   const headerBtn = document.getElementById('add-med-btn-header');
-  const fab = document.getElementById('add-med-fab');
+  const fab       = document.getElementById('add-med-fab');
   if (!headerBtn || !fab) return;
   if (window.innerWidth >= 768) {
     headerBtn.style.display = 'flex';
@@ -176,25 +223,25 @@ function setMedView(view) {
 }
 
 function openAddMedModal(existingMed = null) {
-  const isEdit = !!existingMed;
-  const occupied = AppState.get('medicines')
+  const isEdit    = !!existingMed;
+  const occupied  = AppState.get('medicines')
     .filter(m => !isEdit || m.id !== existingMed.id)
     .map(m => m.compartment);
 
   const compartments = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const frequencies = [
-    ['once-daily', 'Once daily'],
-    ['twice-daily', 'Twice daily'],
-    ['three-daily', 'Three times daily'],
-    ['as-needed', 'As needed'],
-    ['weekly', 'Weekly'],
+  const frequencies  = [
+    ['once-daily',   'Once daily'],
+    ['twice-daily',  'Twice daily'],
+    ['three-daily',  'Three times daily'],
+    ['as-needed',    'As needed'],
+    ['weekly',       'Weekly'],
   ];
   const days = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
-  const selComp = isEdit ? existingMed.compartment : compartments.find(c => !occupied.includes(c)) || 'A';
-  const selFreq = isEdit ? existingMed.frequency : 'once-daily';
-  const selTimes = isEdit ? existingMed.times : ['08:00'];
-  const selDays  = isEdit ? existingMed.daysOfWeek : [0,1,2,3,4,5,6];
+  const selComp  = isEdit ? existingMed.compartment  : compartments.find(c => !occupied.includes(c)) || 'A';
+  const selFreq  = isEdit ? existingMed.frequency    : 'once-daily';
+  const selTimes = isEdit ? existingMed.times        : ['08:00'];
+  const selDays  = isEdit ? (existingMed.daysOfWeek || [0,1,2,3,4,5,6]) : [0,1,2,3,4,5,6];
 
   Modal.open(`
     <h2 class="modal-title" id="modal-title" style="margin-bottom:var(--space-5);">
@@ -306,7 +353,7 @@ function openAddMedModal(existingMed = null) {
     if (!btn) return;
     const day = parseInt(btn.dataset.day);
     if (selectedDays.includes(day)) {
-      if (selectedDays.length === 1) return; /* always at least 1 day */
+      if (selectedDays.length === 1) return;
       selectedDays = selectedDays.filter(d => d !== day);
       btn.classList.remove('selected');
       btn.setAttribute('aria-pressed', 'false');
@@ -343,41 +390,65 @@ function openAddMedModal(existingMed = null) {
   document.getElementById('med-form-cancel').addEventListener('click', () => Modal.close());
 
   /* Submit */
-  document.getElementById('med-form').addEventListener('submit', (e) => {
+  document.getElementById('med-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const name = document.getElementById('mf-name').value.trim();
+    const name   = document.getElementById('mf-name').value.trim();
     const dosage = document.getElementById('mf-dosage').value.trim();
     if (!name || !dosage) {
       Toast.show('Please fill in the required fields.', 'error');
       return;
     }
-    const times = [...document.querySelectorAll('.dose-time-input')].map(i => i.value).filter(Boolean);
+    const times  = [...document.querySelectorAll('.dose-time-input')].map(i => i.value).filter(Boolean);
 
     const medData = {
       name,
       dosage,
-      compartment: selectedComp,
-      color: compartmentColors[selectedComp] || '#5B8A72',
-      purpose: document.getElementById('mf-purpose').value.trim(),
-      frequency: document.getElementById('mf-freq').value,
-      times: times.length ? times : ['08:00'],
-      daysOfWeek: selectedDays.sort(),
+      compartment:  selectedComp,
+      color:        compartmentColors[selectedComp] || '#5B8A72',
+      purpose:      document.getElementById('mf-purpose').value.trim(),
+      frequency:    document.getElementById('mf-freq').value,
+      times:        times.length ? times : ['08:00'],
+      daysOfWeek:   selectedDays.sort(),
       instructions: document.getElementById('mf-instructions').value.trim(),
       prescribedBy: document.getElementById('mf-prescribed').value.trim(),
     };
 
-    if (isEdit) {
-      AppState.updateMedicine(existingMed.id, medData);
-      Toast.show(`${name} updated!`, 'success');
-    } else {
-      AppState.addMedicine(medData);
-      Toast.show(`${name} added!`, 'success');
-    }
+    const saveBtn = document.getElementById('med-form-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = isEdit ? 'Saving…' : 'Adding…';
 
-    Modal.close();
-    /* Re-render content */
-    document.getElementById('med-content').innerHTML = renderMedContent(AppState.get('medicines'), _medsView);
-    document.querySelector('.page-subtitle').textContent = `${AppState.get('medicines').length} active medications`;
+    const uid        = AppState.getCurrentUid();
+    const isDemoMode = AppState.get('isDemoMode');
+
+    try {
+      if (isDemoMode) {
+        if (isEdit) {
+          AppState.updateMedicine(existingMed.id, medData);
+          Toast.show(`${name} updated!`, 'success');
+        } else {
+          AppState.addMedicine(medData);
+          Toast.show(`${name} added!`, 'success');
+        }
+      } else {
+        if (isEdit) {
+          await FirebaseDB.updateMedicine(uid, existingMed.id, medData);
+          Toast.show(`${name} updated!`, 'success');
+        } else {
+          await FirebaseDB.addMedicine(uid, medData);
+          Toast.show(`${name} added!`, 'success');
+        }
+      }
+      Modal.close();
+      /* onSnapshot will refresh the list automatically in real mode */
+      if (isDemoMode) {
+        _refreshMedUI(AppState.get('medicines'));
+      }
+    } catch (err) {
+      console.error('Save medicine error:', err);
+      Toast.show('Could not save. Please check your connection and try again.', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = isEdit ? 'Save Changes' : 'Add Medicine';
+    }
   });
 }
 
@@ -390,12 +461,29 @@ function confirmDeleteMed(medId) {
   const med = AppState.get('medicines').find(m => m.id === medId);
   if (!med) return;
   showConfirm(
-    'Delete medicine?',
-    `Are you sure you want to remove <strong>${med.name}</strong> from your list? This cannot be undone.`,
-    () => {
-      AppState.deleteMedicine(medId);
-      Toast.show(`${med.name} removed.`, 'warning');
-      document.getElementById('med-content').innerHTML = renderMedContent(AppState.get('medicines'), _medsView);
+    'Remove medicine?',
+    `Are you sure you want to remove <strong>${med.name}</strong>? Your dose history will be kept.`,
+    async () => {
+      const uid        = AppState.getCurrentUid();
+      const isDemoMode = AppState.get('isDemoMode');
+      try {
+        if (isDemoMode) {
+          AppState.deleteMedicine(medId);
+          _refreshMedUI(AppState.get('medicines'));
+        } else {
+          await FirebaseDB.softDeleteMedicine(uid, medId);
+          /* onSnapshot triggers _refreshMedUI automatically */
+        }
+        Toast.show(`${med.name} removed.`, 'warning');
+      } catch (err) {
+        console.error('Delete medicine error:', err);
+        Toast.show('Could not remove medicine. Please try again.', 'error');
+      }
     }
   );
+}
+
+function cleanupMedications() {
+  AppState.unregisterListener('medications-list');
+  _medsUnsub = null;
 }

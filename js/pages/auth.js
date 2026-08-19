@@ -46,21 +46,40 @@ function renderAuth(mode = 'login') {
       </button>
     </div>
 
-    <!-- Form -->
+    <!-- Error message area -->
+    <div id="auth-error" class="auth-error" role="alert" aria-live="polite" style="display:none;"></div>
+
+    <!-- Google Sign-In Button -->
+    <button class="btn-google" id="google-signin-btn" type="button" aria-label="Continue with Google">
+      <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        <path fill="none" d="M0 0h48v48H0z"/>
+      </svg>
+      Continue with Google
+    </button>
+
+    <div class="auth-divider">
+      <span>or</span>
+    </div>
+
+    <!-- Traditional form (kept for layout; submits via Google in this version) -->
     <form id="auth-form" novalidate>
 
       ${!isLogin ? `
       <div class="form-group">
         <label class="form-label" for="auth-name">Full Name</label>
         <input class="form-input" type="text" id="auth-name" name="name"
-          placeholder="e.g. Mary Johnson" autocomplete="name" required />
+          placeholder="e.g. Mary Johnson" autocomplete="name" />
       </div>
       ` : ''}
 
       <div class="form-group">
         <label class="form-label" for="auth-email">Email Address</label>
         <input class="form-input" type="email" id="auth-email" name="email"
-          placeholder="you@example.com" autocomplete="email" required />
+          placeholder="you@example.com" autocomplete="email" />
       </div>
 
       <div class="form-group">
@@ -68,7 +87,7 @@ function renderAuth(mode = 'login') {
         <div style="position:relative;">
           <input class="form-input" type="password" id="auth-password" name="password"
             placeholder="${isLogin ? 'Enter your password' : 'Create a strong password'}"
-            autocomplete="${isLogin ? 'current-password' : 'new-password'}" required
+            autocomplete="${isLogin ? 'current-password' : 'new-password'}"
             style="padding-right: 52px;" />
           <button type="button" id="toggle-pw" class="icon-btn" aria-label="Show or hide password"
             style="position:absolute; right:4px; top:50%; transform:translateY(-50%); color:var(--text-muted);">
@@ -77,16 +96,8 @@ function renderAuth(mode = 'login') {
         </div>
       </div>
 
-      ${!isLogin ? `
-      <div class="form-group">
-        <label class="form-label" for="auth-phone">Phone (optional)</label>
-        <input class="form-input" type="tel" id="auth-phone" name="phone"
-          placeholder="+1 (555) 000-0000" autocomplete="tel" />
-      </div>
-      ` : ''}
-
-      <button type="submit" class="btn btn-primary btn-full" id="auth-submit" style="margin-top:var(--space-2);">
-        ${isLogin ? 'Sign In' : 'Create Account'}
+      <button type="submit" class="btn btn-secondary btn-full" id="auth-submit" style="margin-top:var(--space-2);">
+        ${isLogin ? 'Sign In with Email' : 'Create Account with Email'}
       </button>
 
     </form>
@@ -99,7 +110,8 @@ function renderAuth(mode = 'login') {
     </p>
 
     <div class="auth-demo-note">
-      <strong>Demo mode:</strong> No real credentials needed — just click "Sign In" or enter anything.
+      <strong>Note:</strong> Email sign-in coming soon — use "Continue with Google" above, or
+      <button class="auth-link" id="auth-demo-link">try the demo dashboard</button>.
     </div>
 
   </div>
@@ -114,6 +126,60 @@ function renderAuth(mode = 'login') {
 
 </div>
   `;
+}
+
+/* ─── Friendly error messages ─── */
+function _friendlyAuthError(code) {
+  const map = {
+    'auth/popup-closed-by-user':    'Sign-in was cancelled. Tap "Continue with Google" to try again.',
+    'auth/cancelled-popup-request': 'Sign-in was cancelled. Please try again.',
+    'auth/network-request-failed':  'No internet connection. Please check your network and try again.',
+    'auth/too-many-requests':       'Too many sign-in attempts. Please wait a moment and try again.',
+    'auth/user-disabled':           'This account has been disabled. Please contact support.',
+    'auth/account-exists-with-different-credential': 'An account already exists with this email. Try a different sign-in method.',
+    'auth/operation-not-allowed':   'Google Sign-In is not enabled. Please contact the app administrator.',
+    'auth/internal-error':          'An internal error occurred. If you are running locally, make sure this domain is added to Firebase Authorized Domains.',
+    'auth/unauthorized-domain':     'This domain is not authorised for Google Sign-In. Please add it to Firebase Authorized Domains.',
+    'auth/invalid-api-key':         'Invalid Firebase API key. Please check your Firebase configuration.',
+    'auth/popup-blocked':           'The sign-in popup was blocked by your browser. Please allow popups for this site and try again.',
+  };
+  return map[code] || `Something went wrong (${code || 'unknown error'}). Please try again in a moment.`;
+}
+
+function _showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function _hideAuthError() {
+  const el = document.getElementById('auth-error');
+  if (el) el.style.display = 'none';
+}
+
+function _setGoogleBtnLoading(loading) {
+  const btn = document.getElementById('google-signin-btn');
+  if (!btn) return;
+  if (loading) {
+    btn.disabled = true;
+    btn.innerHTML = `
+      <span class="auth-spinner" aria-hidden="true"></span>
+      Signing in…
+    `;
+  } else {
+    btn.disabled = false;
+    btn.innerHTML = `
+      <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        <path fill="none" d="M0 0h48v48H0z"/>
+      </svg>
+      Continue with Google
+    `;
+  }
 }
 
 function initAuth(mode) {
@@ -144,16 +210,35 @@ function initAuth(mode) {
     window.location.hash = mode === 'login' ? '#signup' : '#login';
   });
 
-  /* Form submit — demo mode, no real validation */
+  /* Demo link in the note */
+  document.getElementById('auth-demo-link').addEventListener('click', () => {
+    AppState.loginDemo('patient');
+    window.location.hash = '#dashboard';
+  });
+
+  /* ── Google Sign-In ── */
+  document.getElementById('google-signin-btn').addEventListener('click', async () => {
+    _hideAuthError();
+    _setGoogleBtnLoading(true);
+    /* Store selected role BEFORE sign-in so it is available even if the
+       popup closes and onAuthStateChanged fires before the try-block resumes */
+    sessionStorage.setItem('ps_preferred_role', selectedRole);
+    try {
+      await FirebaseAuth.signInWithGoogle();
+      /* onAuthStateChanged fires next → AppState.onFirebaseAuthChange → navigates */
+    } catch (err) {
+      console.error('Google sign-in error — full details:', err);
+      console.error('Error code:', err.code);
+      console.error('Error message:', err.message);
+      _setGoogleBtnLoading(false);
+      _showAuthError(_friendlyAuthError(err.code));
+    }
+  });
+
+  /* ── Email form submit (placeholder — shows helpful message) ── */
   document.getElementById('auth-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const btn = document.getElementById('auth-submit');
-    btn.textContent = 'Signing in…';
-    btn.disabled = true;
-    setTimeout(() => {
-      AppState.login(selectedRole);
-      window.location.hash = selectedRole === 'caregiver' ? '#caregiver' : '#dashboard';
-    }, 600);
+    _showAuthError('Email sign-in is not yet enabled. Please use "Continue with Google" above.');
   });
 
   /* Sync icon visibility */

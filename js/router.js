@@ -9,9 +9,10 @@ const Router = (() => {
 
   /* Page cleanup functions (called before leaving a page) */
   const cleanupFns = {
-    dashboard: () => typeof cleanupDashboard === 'function' && cleanupDashboard(),
-    schedule:  () => typeof cleanupSchedule  === 'function' && cleanupSchedule(),
-    settings:  () => typeof cleanupSettings  === 'function' && cleanupSettings(),
+    dashboard:   () => typeof cleanupDashboard   === 'function' && cleanupDashboard(),
+    schedule:    () => typeof cleanupSchedule    === 'function' && cleanupSchedule(),
+    settings:    () => typeof cleanupSettings    === 'function' && cleanupSettings(),
+    medications: () => typeof cleanupMedications === 'function' && cleanupMedications(),
   };
 
   /* Page render + init mapping */
@@ -30,30 +31,31 @@ const Router = (() => {
   let _currentPage = null;
 
   function navigate(hash) {
-    const page = (hash || 'landing').replace('#', '');
+    const page    = (hash || 'landing').replace('#', '');
     const pageKey = page || 'landing';
-    const def = pages[pageKey];
+    const def     = pages[pageKey];
 
     if (!def) {
       window.location.hash = '#landing';
       return;
     }
 
-    /* Auth guard: redirect to login if trying to access app pages without login */
-    if (!AUTH_PAGES.has(pageKey) && !AppState.get('isLoggedIn')) {
-      window.location.hash = '#login';
+    /* Auth guard: redirect to login/landing if accessing app pages without auth */
+    const isLoggedIn = AppState.get('isLoggedIn');
+    if (!AUTH_PAGES.has(pageKey) && !isLoggedIn) {
+      window.location.hash = '#landing';
       return;
     }
 
-    /* Redirect logged-in users away from auth pages */
-    if (AUTH_PAGES.has(pageKey) && AppState.get('isLoggedIn') && pageKey !== 'landing') {
+    /* Redirect already-signed-in users away from auth pages */
+    if (AUTH_PAGES.has(pageKey) && isLoggedIn && pageKey !== 'landing') {
       window.location.hash = '#dashboard';
       return;
     }
 
     /* Run cleanup on previous page */
     if (_currentPage && cleanupFns[_currentPage]) {
-      cleanupFns[_currentPage]();
+      try { cleanupFns[_currentPage](); } catch (_) {}
     }
 
     _currentPage = pageKey;

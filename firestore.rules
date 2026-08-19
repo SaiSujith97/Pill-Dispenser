@@ -1,0 +1,89 @@
+// ═══════════════════════════════════════════════════════════════
+// PillSync — Firestore Security Rules
+// ═══════════════════════════════════════════════════════════════
+//
+// DEPLOYMENT:
+//   firebase deploy --only firestore:rules
+//   …or paste into Firebase Console → Firestore Database → Rules tab.
+//
+// STRUCTURE:
+//   users/{uid}                         — User profile document
+//   users/{uid}/medicines/{medId}       — Medicine catalog per user
+//   users/{uid}/schedule/{date}/doses/{doseId}  — Daily dose entries
+//
+// RULE SUMMARY:
+//   1. users/{uid}          — read/write only by the authenticated owner
+//   2. medicines subcoll.   — read/write only by the authenticated owner
+//   3. schedule subcoll.    — read/write only by the authenticated owner
+//   4. Caregiver access     — read-only for a caregiver whose email is stored
+//                             in the patient's caregiverEmail field.
+//                             (Write access is NEVER granted to caregivers.)
+//   5. Everything else      — deny by default (explicit deny-all at bottom)
+// ═══════════════════════════════════════════════════════════════
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper: is the request from the document's owner? ───────────
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // ─── Helper: is the requester a linked caregiver for this patient? ─
+    // Reads the patient's profile and checks if the caregiver's email
+    // matches the stored caregiverEmail field.
+    function isCaregiverOf(uid) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && get(/databases/$(database)/documents/users/$(uid)).data.caregiverEmail == request.auth.token.email
+        && get(/databases/$(database)/documents/users/$(uid)).data.caregiverEmail != '';
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. User Profile: users/{uid}
+    //    Owner: full read + write
+    //    Caregiver: read-only (to see patient name, role, etc.)
+    // ─────────────────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow read:  if isOwner(uid) || isCaregiverOf(uid);
+      allow write: if isOwner(uid);
+
+      // ───────────────────────────────────────────────────────────────
+      // 2. Medicines: users/{uid}/medicines/{medId}
+      //    Owner: full read + write (including soft-delete via active=false)
+      //    Caregiver: read-only
+      // ───────────────────────────────────────────────────────────────
+      match /medicines/{medId} {
+        allow read:  if isOwner(uid) || isCaregiverOf(uid);
+        allow write: if isOwner(uid);
+      }
+
+      // ───────────────────────────────────────────────────────────────
+      // 3. Schedule + Dose History: users/{uid}/schedule/{date}/doses/{doseId}
+      //    Owner: full read + write (mark taken, skip, etc.)
+      //    Caregiver: read-only (to monitor adherence)
+      //    NOTE: {date} wildcard also covers the parent doc itself.
+      // ───────────────────────────────────────────────────────────────
+      match /schedule/{date} {
+        allow read:  if isOwner(uid) || isCaregiverOf(uid);
+        allow write: if isOwner(uid);
+
+        match /doses/{doseId} {
+          allow read:  if isOwner(uid) || isCaregiverOf(uid);
+          allow write: if isOwner(uid);
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 4. Deny everything else by default (belt-and-suspenders)
+    //    Any path not matched above is implicitly denied, but being
+    //    explicit here makes the intent clear during review.
+    // ─────────────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+  }
+}

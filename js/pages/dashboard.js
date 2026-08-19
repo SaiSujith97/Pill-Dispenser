@@ -2,15 +2,44 @@
    Page: Dashboard (Home)
    ═════════════════════════════ */
 
-let _dashboardTimer = null;
+let _dashboardTimer      = null;
+let _scheduleUnsub       = null;
+let _dashboardDateStr    = null;
+
+/* ─── Skeleton loader ─── */
+function _renderDashboardSkeleton() {
+  return `
+  <div class="page-enter" id="dashboard-root">
+    <div class="page-header">
+      <div class="skeleton" style="height:28px;width:220px;border-radius:8px;margin-bottom:8px;"></div>
+      <div class="skeleton" style="height:16px;width:160px;border-radius:6px;"></div>
+    </div>
+    <div class="skeleton" style="height:160px;border-radius:var(--radius-xl);margin-bottom:var(--space-5);"></div>
+    <div class="stats-row" style="margin-bottom:var(--space-5);">
+      ${[1,2,3,4].map(() => `<div class="skeleton stat-card" style="height:72px;"></div>`).join('')}
+    </div>
+    <div class="skeleton" style="height:24px;width:160px;border-radius:6px;margin-bottom:var(--space-4);"></div>
+    ${[1,2,3].map(() => `<div class="skeleton" style="height:72px;border-radius:var(--radius-lg);margin-bottom:var(--space-3);"></div>`).join('')}
+  </div>`;
+}
 
 function renderDashboard() {
+  /* Show skeleton immediately; real data fills in after Firestore responds */
+  return _renderDashboardSkeleton();
+}
+
+function _renderDashboardContent() {
   const schedule   = AppState.get('todaySchedule');
   const medicines  = AppState.get('medicines');
-  const device     = AppState.get('device');
-  const user       = APP_DATA.users.patient;
+  const device     = AppState.get('device') || {};
+  const profile    = AppState.get('userProfile');
+  const isDemoMode = AppState.get('isDemoMode');
 
-  const now = new Date();
+  const firstName  = profile
+    ? (profile.name || 'Friend').split(' ')[0]
+    : (isDemoMode ? APP_DATA.users.patient.name.split(' ')[0] : 'Friend');
+
+  const now      = new Date();
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
 
   /* Next upcoming dose */
@@ -19,12 +48,22 @@ function renderDashboard() {
     .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
 
   const nextDose = upcoming[0] || null;
-  const nextMed  = nextDose ? medicines.find(m => m.id === nextDose.medicineId) : null;
+  const nextMed  = nextDose
+    ? medicines.find(m => m.id === nextDose.medicineId) || {
+        name: nextDose.medicineName || '—',
+        dosage: nextDose.dosage || '',
+        instructions: nextDose.instructions || '',
+        color: nextDose.color || '#5B8A72',
+        compartment: nextDose.compartment || '',
+      }
+    : null;
 
   /* Stats */
   const taken  = schedule.filter(d => d.status === 'taken').length;
   const missed = schedule.filter(d => d.status === 'missed').length;
   const total  = schedule.length;
+
+  /* Adherence from real history */
   const weekPct = AppState.getAdherencePct();
 
   return `
@@ -32,7 +71,7 @@ function renderDashboard() {
 
   <!-- Page header -->
   <div class="page-header">
-    <h1 class="page-title">${greeting}, ${user.name.split(' ')[0]} 👋</h1>
+    <h1 class="page-title">${greeting}, ${firstName} 👋</h1>
     <p class="page-subtitle">${now.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' })}</p>
   </div>
 
@@ -41,7 +80,7 @@ function renderDashboard() {
   <div class="next-dose-card" id="next-dose-card" role="region" aria-label="Next dose">
     <p class="next-dose-eyebrow">Next Dose</p>
     <p class="next-dose-name">${nextMed.name} ${nextMed.dosage}</p>
-    <p class="next-dose-detail">${nextMed.instructions}</p>
+    <p class="next-dose-detail">${nextMed.instructions || ''}</p>
     <div class="next-dose-time" id="next-dose-time" aria-live="polite">${formatTime12(nextDose.scheduledTime)}</div>
     <div class="next-dose-countdown" id="next-dose-countdown">
       In ${getTimeUntil(nextDose.scheduledTime) || '—'}
@@ -99,7 +138,16 @@ function renderDashboard() {
     </div>
 
     <div class="timeline" id="today-timeline" role="list">
-      ${renderTimeline(schedule, medicines)}
+      ${total === 0
+        ? `<div class="empty-state">
+             <div class="empty-state-icon" aria-hidden="true">
+               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+             </div>
+             <p class="empty-state-title">No doses scheduled today</p>
+             <p class="empty-state-desc">Add medicines to see your daily schedule here.</p>
+           </div>`
+        : renderTimeline(schedule, medicines)
+      }
     </div>
   </div>
 
@@ -112,26 +160,26 @@ function renderDashboard() {
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
         </div>
         <div class="device-info">
-          <div class="device-name">${device.name}</div>
+          <div class="device-name">${device.name || 'No device paired'}</div>
           <div class="device-status">
             <span class="status-dot ${device.connected ? '' : 'offline'}" aria-hidden="true"></span>
             <span>${device.connected ? 'Connected' : 'Offline'}</span>
-            &middot; Synced ${device.lastSync}
+            ${device.lastSync ? `&middot; Synced ${device.lastSync}` : ''}
           </div>
         </div>
         <div style="text-align:right; flex-shrink:0;">
-          <div style="font-size:var(--text-sm); font-weight:600; color:${device.battery < 20 ? 'var(--danger)' : 'var(--text-primary)'}">
-            🔋 ${device.battery}%
+          <div style="font-size:var(--text-sm); font-weight:600; color:${(device.battery||100) < 20 ? 'var(--danger)' : 'var(--text-primary)'}">
+            🔋 ${device.battery || '—'}%
           </div>
           <div style="font-size:var(--text-xs); color:var(--text-muted); margin-top:2px;">
-            v${device.firmware}
+            v${device.firmware || '—'}
           </div>
         </div>
       </div>
 
       <!-- Compartment grid -->
       <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-2); margin-top:var(--space-4); padding-top:var(--space-4); border-top:1px solid var(--border-light);">
-        ${Object.entries(device.compartments).map(([key, comp]) => {
+        ${device.compartments ? Object.entries(device.compartments).map(([key, comp]) => {
           const med = medicines.find(m => m.id === comp.medicineId);
           return `
           <div style="background:var(--bg-raised); border-radius:var(--radius-md); padding:var(--space-3); text-align:center;">
@@ -139,7 +187,7 @@ function renderDashboard() {
             <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">${med ? med.name : 'Empty'}</div>
             <div style="font-size:10px; color:var(--text-muted);">${comp.pillCount} left</div>
           </div>`;
-        }).join('')}
+        }).join('') : '<div style="grid-column:1/-1; text-align:center; color:var(--text-muted); font-size:var(--text-sm); padding:var(--space-3);">Pair a device to see compartments</div>'}
       </div>
     </div>
   </div>
@@ -151,8 +199,14 @@ function renderDashboard() {
 function renderTimeline(schedule, medicines) {
   const sorted = [...schedule].sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
   return sorted.map(dose => {
-    const med = medicines.find(m => m.id === dose.medicineId);
-    if (!med) return '';
+    /* Support both Firestore docs (medicineName) and mock objects (medicineId lookup) */
+    const med = medicines.find(m => m.id === dose.medicineId) || {
+      name:        dose.medicineName  || '—',
+      dosage:      dose.dosage        || '',
+      instructions:dose.instructions  || '',
+      color:       dose.color         || '#5B8A72',
+      compartment: dose.compartment   || '',
+    };
     const s = StatusConfig[dose.status] || StatusConfig.upcoming;
     return `
     <div class="timeline-item" role="listitem" data-dose-id="${dose.id}">
@@ -170,7 +224,7 @@ function renderTimeline(schedule, medicines) {
         <div class="compartment-badge" style="background:${med.color};" aria-label="Compartment ${med.compartment}">${med.compartment}</div>
         <div class="timeline-card-info">
           <div class="timeline-med-name">${med.name}</div>
-          <div class="timeline-med-dosage">${med.dosage} · ${med.instructions}</div>
+          <div class="timeline-med-dosage">${med.dosage}${med.instructions ? ' · ' + med.instructions : ''}</div>
         </div>
         <div style="flex-shrink:0;">${getStatusBadge(dose.status)}</div>
         ${dose.status === 'upcoming' ? `
@@ -186,17 +240,69 @@ function renderTimeline(schedule, medicines) {
   }).join('');
 }
 
-function initDashboard() {
+async function initDashboard() {
+  const uid        = AppState.getCurrentUid();
+  const isDemoMode = AppState.get('isDemoMode');
+
+  _dashboardDateStr = new Date().toISOString().split('T')[0];
+
+  if (isDemoMode) {
+    /* Demo mode: just render from mock AppState */
+    _renderRealDashboard();
+    _initDashboardInteractions();
+    _dashboardTimer = setInterval(_updateCountdown, 30000);
+    return;
+  }
+
+  if (!uid) {
+    window.location.hash = '#landing';
+    return;
+  }
+
+  /* Real mode: generate today's schedule if needed, then subscribe */
+  try {
+    const medicines = AppState.get('medicines');
+    await FirebaseDB.generateTodaySchedule(uid, _dashboardDateStr, medicines);
+  } catch (err) {
+    console.warn('Schedule generation error:', err);
+  }
+
+  /* Subscribe to live updates */
+  const unsub = FirebaseDB.getTodaySchedule(uid, _dashboardDateStr, async (err, doses) => {
+    if (err) {
+      console.error('Schedule snapshot error:', err);
+      Toast.show('Could not load today\'s schedule. Check your connection.', 'error');
+      return;
+    }
+
+    AppState.set('todaySchedule', doses);
+
+    /* Flag missed doses (client-side) */
+    try {
+      await FirebaseDB.flagMissedDoses(uid, _dashboardDateStr, doses);
+    } catch (_) {}
+
+    _renderRealDashboard();
+    _initDashboardInteractions();
+  });
+
+  AppState.registerListener('dashboard-schedule', unsub);
+  _dashboardTimer = setInterval(_updateCountdown, 30000);
+}
+
+function _renderRealDashboard() {
+  const root = document.getElementById('dashboard-root');
+  if (!root) return;
+  /* Replace skeleton with real content */
+  root.outerHTML = _renderDashboardContent();
+  _initDashboardInteractions();
+}
+
+function _initDashboardInteractions() {
   /* Mark as taken — next dose card */
   const markNextBtn = document.getElementById('mark-next-taken-btn');
   if (markNextBtn) {
-    markNextBtn.addEventListener('click', () => {
-      const doseId = markNextBtn.dataset.doseId;
-      if (AppState.markDoseTaken(doseId)) {
-        Toast.show('✓ Dose marked as taken!', 'success');
-        refreshDashboard();
-      }
-    });
+    markNextBtn.addEventListener('click', () => _handleTakeDose(markNextBtn.dataset.doseId));
   }
 
   /* Skip button */
@@ -205,60 +311,102 @@ function initDashboard() {
     skipBtn.addEventListener('click', () => {
       const doseId = skipBtn.dataset.doseId;
       showConfirm('Skip this dose?', 'Are you sure you want to skip this dose? Your caregiver may be notified.', () => {
-        AppState.skipDose(doseId);
-        Toast.show('Dose skipped.', 'warning');
-        refreshDashboard();
+        _handleSkipDose(doseId);
       });
     });
   }
 
-  /* Timeline take buttons */
-  document.addEventListener('click', _timelineTakeHandler);
-
-  /* Countdown timer */
-  _dashboardTimer = setInterval(_updateCountdown, 30000);
+  /* Timeline take buttons (delegated) */
+  const timeline = document.getElementById('today-timeline');
+  if (timeline) {
+    timeline.addEventListener('click', (e) => {
+      const btn = e.target.closest('.timeline-take-btn');
+      if (btn) _handleTakeDose(btn.dataset.doseId);
+    });
+  }
 }
 
-function _timelineTakeHandler(e) {
-  const btn = e.target.closest('.timeline-take-btn');
-  if (!btn) return;
-  const doseId = btn.dataset.doseId;
-  if (AppState.markDoseTaken(doseId)) {
+async function _handleTakeDose(doseId) {
+  const uid        = AppState.getCurrentUid();
+  const isDemoMode = AppState.get('isDemoMode');
+
+  if (isDemoMode) {
+    AppState.markDoseTaken(doseId);
     Toast.show('✓ Dose marked as taken!', 'success');
     refreshDashboard();
+    return;
+  }
+
+  try {
+    await FirebaseDB.markDoseTaken(uid, _dashboardDateStr, doseId);
+    Toast.show('✓ Dose marked as taken!', 'success');
+    /* onSnapshot will fire and refreshDashboard automatically */
+  } catch (err) {
+    console.error('markDoseTaken error:', err);
+    Toast.show('Could not update dose. Please try again.', 'error');
+  }
+}
+
+async function _handleSkipDose(doseId) {
+  const uid        = AppState.getCurrentUid();
+  const isDemoMode = AppState.get('isDemoMode');
+
+  if (isDemoMode) {
+    AppState.skipDose(doseId);
+    Toast.show('Dose skipped.', 'warning');
+    refreshDashboard();
+    return;
+  }
+
+  try {
+    await FirebaseDB.skipDose(uid, _dashboardDateStr, doseId);
+    Toast.show('Dose skipped.', 'warning');
+  } catch (err) {
+    console.error('skipDose error:', err);
+    Toast.show('Could not skip dose. Please try again.', 'error');
   }
 }
 
 function _updateCountdown() {
   const countdownEl = document.getElementById('next-dose-countdown');
+  if (!countdownEl) return;
   const schedule = AppState.get('todaySchedule');
   const nextDose = schedule.filter(d => d.status === 'upcoming')
     .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime))[0];
-  if (countdownEl && nextDose) {
+  if (nextDose) {
     const t = getTimeUntil(nextDose.scheduledTime);
     countdownEl.textContent = t ? `In ${t}` : 'Due now!';
   }
 }
 
+/* Called by onSnapshot callback (real mode) to re-render dashboard content area */
 function refreshDashboard() {
   const root = document.getElementById('dashboard-root');
   if (!root) return;
+
   clearInterval(_dashboardTimer);
-  document.removeEventListener('click', _timelineTakeHandler);
 
   const schedule  = AppState.get('todaySchedule');
   const medicines = AppState.get('medicines');
 
-  /* ── Update timeline ── */
+  /* Update timeline */
   const timelineEl = document.getElementById('today-timeline');
   if (timelineEl) {
-    timelineEl.innerHTML = renderTimeline(schedule, medicines);
+    timelineEl.innerHTML = schedule.length === 0
+      ? `<div class="empty-state">
+           <div class="empty-state-icon" aria-hidden="true">
+             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+           </div>
+           <p class="empty-state-title">No doses scheduled today</p>
+           <p class="empty-state-desc">Add medicines to see your daily schedule here.</p>
+         </div>`
+      : renderTimeline(schedule, medicines);
   }
 
-  /* ── Update stat cards inline ── */
-  const taken  = schedule.filter(d => d.status === 'taken').length;
-  const missed = schedule.filter(d => d.status === 'missed').length;
-  const total  = schedule.length;
+  /* Update stat cards */
+  const taken   = schedule.filter(d => d.status === 'taken').length;
+  const missed  = schedule.filter(d => d.status === 'missed').length;
+  const total   = schedule.length;
   const weekPct = AppState.getAdherencePct();
 
   const statEls = root.querySelectorAll('.stat-card .stat-value');
@@ -268,19 +416,17 @@ function refreshDashboard() {
     statEls[2].textContent = missed;
     statEls[3].textContent = total;
   }
-  /* Color the missed card */
   const statCards = root.querySelectorAll('.stat-card');
   if (statCards[2]) {
     statCards[2].className = `stat-card ${missed > 0 ? 'stat-danger' : ''}`;
   }
 
-  /* ── Update next-dose hero card ── */
-  const upcoming = schedule.filter(d => d.status === 'upcoming')
+  /* Update next-dose hero */
+  const upcoming  = schedule.filter(d => d.status === 'upcoming')
     .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
-
   const nextDoseCard = document.getElementById('next-dose-card');
+
   if (!upcoming[0] && nextDoseCard) {
-    /* All done */
     nextDoseCard.outerHTML = `
       <div class="all-done-card" role="region" aria-label="All doses complete">
         <div class="all-done-icon" aria-hidden="true">
@@ -290,36 +436,34 @@ function refreshDashboard() {
         <p style="color:rgba(255,255,255,0.8); font-size:var(--text-sm);">All your doses are complete. Great job staying on track.</p>
       </div>`;
   } else if (upcoming[0] && nextDoseCard) {
-    /* Update dose card details to show next upcoming dose */
-    const nextMed = medicines.find(m => m.id === upcoming[0].medicineId);
-    if (nextMed) {
-      const nameEl = nextDoseCard.querySelector('.next-dose-name');
-      const detailEl = nextDoseCard.querySelector('.next-dose-detail');
-      const timeEl = nextDoseCard.querySelector('.next-dose-time');
-      const cdEl = nextDoseCard.querySelector('.next-dose-countdown');
-      const btn = nextDoseCard.querySelector('#mark-next-taken-btn');
-      const skipBtn = nextDoseCard.querySelector('#skip-next-btn');
-      if (nameEl)   nameEl.textContent   = `${nextMed.name} ${nextMed.dosage}`;
-      if (detailEl) detailEl.textContent = nextMed.instructions;
-      if (timeEl)   timeEl.textContent   = formatTime12(upcoming[0].scheduledTime);
-      if (cdEl) {
-        const t = getTimeUntil(upcoming[0].scheduledTime);
-        cdEl.textContent = t ? `In ${t}` : 'Due now!';
-      }
-      if (btn)     btn.dataset.doseId    = upcoming[0].id;
-      if (skipBtn) skipBtn.dataset.doseId = upcoming[0].id;
-      /* Re-wire buttons */
-      initDashboard();
+    const med = medicines.find(m => m.id === upcoming[0].medicineId) || {
+      name: upcoming[0].medicineName || '—', dosage: upcoming[0].dosage || '',
+      instructions: upcoming[0].instructions || '',
+    };
+    const nameEl   = nextDoseCard.querySelector('.next-dose-name');
+    const detailEl = nextDoseCard.querySelector('.next-dose-detail');
+    const timeEl   = nextDoseCard.querySelector('.next-dose-time');
+    const cdEl     = nextDoseCard.querySelector('.next-dose-countdown');
+    const btn      = nextDoseCard.querySelector('#mark-next-taken-btn');
+    const skipBtn  = nextDoseCard.querySelector('#skip-next-btn');
+    if (nameEl)   nameEl.textContent   = `${med.name} ${med.dosage}`;
+    if (detailEl) detailEl.textContent = med.instructions;
+    if (timeEl)   timeEl.textContent   = formatTime12(upcoming[0].scheduledTime);
+    if (cdEl) {
+      const t = getTimeUntil(upcoming[0].scheduledTime);
+      cdEl.textContent = t ? `In ${t}` : 'Due now!';
     }
+    if (btn)     btn.dataset.doseId     = upcoming[0].id;
+    if (skipBtn) skipBtn.dataset.doseId = upcoming[0].id;
+    _initDashboardInteractions();
   }
 
   updateBadges();
-  document.addEventListener('click', _timelineTakeHandler);
   _dashboardTimer = setInterval(_updateCountdown, 30000);
 }
 
 function cleanupDashboard() {
   clearInterval(_dashboardTimer);
   _dashboardTimer = null;
-  document.removeEventListener('click', _timelineTakeHandler);
+  AppState.unregisterListener('dashboard-schedule');
 }

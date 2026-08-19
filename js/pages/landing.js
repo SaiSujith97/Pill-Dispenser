@@ -152,7 +152,8 @@ function initLanding() {
     window.location.hash = '#signup';
   });
   document.getElementById('landing-demo-btn').addEventListener('click', () => {
-    AppState.login('patient');
+    /* loginDemo loads mock data and bypasses Firebase auth */
+    AppState.loginDemo('patient');
     window.location.hash = '#dashboard';
   });
   /* Theme button in landing nav is wired via the global delegate in theme.js */

@@ -5,7 +5,12 @@
 (function () {
   'use strict';
 
+  let _bootstrapped = false;
+
   function bootstrap() {
+    if (_bootstrapped) return;
+    _bootstrapped = true;
+
     /* ── 1. Initialize state (device / reminders / demo-data pre-load) ── */
     AppState.init();
 

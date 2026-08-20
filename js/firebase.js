@@ -62,18 +62,11 @@ provider.setCustomParameters({ prompt: 'select_account' });
 
 window.FirebaseAuth = {
 
-  /* Sign in — tries popup, falls back to redirect for mobile */
+  /* Sign in — clean popup flow */
   signInWithGoogle() {
-    return signInWithPopup(auth, provider).catch((err) => {
-      if (
-        err.code === 'auth/popup-blocked' ||
-        err.code === 'auth/popup-cancelled-by-user'
-      ) {
-        /* Mobile / blocked popup → redirect flow */
-        return signInWithRedirect(auth, provider);
-      }
-      throw err;
-    });
+    const freshProvider = new GoogleAuthProvider();
+    freshProvider.setCustomParameters({ prompt: 'select_account' });
+    return signInWithPopup(auth, freshProvider);
   },
 
   signOut() {
@@ -140,11 +133,19 @@ window.FirebaseDB = {
    */
   getMedicines(uid, callback) {
     const col = collection(db, 'users', uid, 'medicines');
-    const q   = query(col, where('active', '==', true), orderBy('createdAt', 'asc'));
+    const q   = query(col, where('active', '==', true));
     return onSnapshot(q, (snap) => {
       const meds = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      meds.sort((a, b) => {
+        const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+        const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+        return tA - tB;
+      });
       callback(null, meds);
-    }, (err) => callback(err, []));
+    }, (err) => {
+      console.error('getMedicines snapshot error:', err);
+      callback(err, []);
+    });
   },
 
   /**

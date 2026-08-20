@@ -89,35 +89,48 @@ const AppState = (() => {
   async function onFirebaseAuthChange(user) {
     if (user) {
       /* ── Signed in ── */
+      const storedRole = sessionStorage.getItem('ps_preferred_role') || 'patient';
+      const fallbackProfile = {
+        uid:            user.uid,
+        name:           user.displayName || 'User',
+        email:          user.email || '',
+        photoURL:       user.photoURL || null,
+        role:           storedRole,
+        caregiverEmail: '',
+      };
+
       _state.firebaseUser = user;
+      _state.userProfile  = fallbackProfile;
+      _state.currentUser  = storedRole;
+      _state.isLoggedIn   = true;
       _state.isDemoMode   = false;
 
+      _notify('firebaseUser',  user);
+      _notify('userProfile',   fallbackProfile);
+      _notify('isLoggedIn',    true);
+      _notify('currentUser',   storedRole);
+
+      /* Update sidebar avatar with real name */
+      _updateUserDisplay(true);
+
+      /* Navigate to dashboard if currently on an auth or empty page */
+      const currentHash = window.location.hash.replace('#', '') || 'landing';
+      if (['', 'landing', 'login', 'signup'].includes(currentHash)) {
+        window.location.hash = '#dashboard';
+      }
+
+      /* Ensure Firestore profile exists / sync in background */
       try {
-        /* Ensure Firestore profile exists / load it */
-        const profile = await FirebaseDB.ensureUserProfile(user, 'patient');
-        _state.userProfile  = profile;
-        _state.currentUser  = profile.role || 'patient';
-        _state.isLoggedIn   = true;
-
-        _notify('firebaseUser',  user);
-        _notify('userProfile',   profile);
-        _notify('isLoggedIn',    true);
-        _notify('currentUser',   _state.currentUser);
-
-        /* Update sidebar avatar with real name */
-        _updateUserDisplay(true);
-
-        /* Navigate to dashboard (Router is already listening to state) */
-        if (window.location.hash === '' ||
-            window.location.hash === '#' ||
-            window.location.hash === '#landing' ||
-            window.location.hash === '#login' ||
-            window.location.hash === '#signup') {
-          window.location.hash = '#dashboard';
+        const profile = await FirebaseDB.ensureUserProfile(user, storedRole);
+        if (profile) {
+          _state.userProfile = profile;
+          _state.currentUser = profile.role || storedRole;
+          _notify('userProfile', profile);
+          _notify('currentUser', _state.currentUser);
+          _updateUserDisplay(true);
         }
       } catch (err) {
-        console.error('PillSync: failed to load profile', err);
-        Toast.show('Trouble loading your profile. Please try again.', 'error');
+        console.warn('PillSync: profile background sync note:', err);
       }
 
     } else {
@@ -138,8 +151,11 @@ const AppState = (() => {
       /* Cancel any active Firestore listeners */
       _cancelListeners();
 
-      /* Go to landing */
-      window.location.hash = '#landing';
+      /* Only go to landing if currently on a protected page */
+      const currentHash = window.location.hash.replace('#', '') || 'landing';
+      if (!['landing', 'login', 'signup'].includes(currentHash)) {
+        window.location.hash = '#landing';
+      }
     }
   }
 

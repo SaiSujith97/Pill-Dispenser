@@ -152,9 +152,9 @@ function initMedications() {
   document.getElementById('view-list-btn').addEventListener('click', () => setMedView('list'));
 
   /* Add buttons */
-  document.getElementById('add-med-fab').addEventListener('click', openAddMedModal);
+  document.getElementById('add-med-fab').addEventListener('click', () => openAddMedModal());
   const headerBtn = document.getElementById('add-med-btn-header');
-  if (headerBtn) headerBtn.addEventListener('click', openAddMedModal);
+  if (headerBtn) headerBtn.addEventListener('click', () => openAddMedModal());
 
   /* Edit / Delete — delegated */
   document.getElementById('meds-root').addEventListener('click', (e) => {
@@ -170,13 +170,19 @@ function initMedications() {
   /* ── Data source ── */
   if (isDemoMode) {
     /* Demo: render from AppState mock data */
-    _refreshMedUI(AppState.get('medicines'));
+    _refreshMedUI(AppState.get('medicines') || []);
     return;
   }
 
   if (!uid) {
     window.location.hash = '#landing';
     return;
+  }
+
+  /* Show any currently cached medicines immediately */
+  const cachedMeds = AppState.get('medicines') || [];
+  if (cachedMeds.length > 0) {
+    _refreshMedUI(cachedMeds);
   }
 
   /* Real: subscribe to Firestore */
@@ -186,18 +192,19 @@ function initMedications() {
       Toast.show('Could not load your medications. Check your connection.', 'error');
       return;
     }
-    AppState.set('medicines', medicines);
-    _refreshMedUI(medicines);
+    AppState.set('medicines', medicines || []);
+    _refreshMedUI(medicines || []);
   });
   AppState.registerListener('medications-list', unsub);
   _medsUnsub = unsub;
 }
 
 function _refreshMedUI(medicines) {
+  const list = medicines || [];
   const countEl = document.getElementById('meds-count');
-  if (countEl) countEl.textContent = `${medicines.length} active medication${medicines.length !== 1 ? 's' : ''}`;
+  if (countEl) countEl.textContent = `${list.length} active medication${list.length !== 1 ? 's' : ''}`;
   const content = document.getElementById('med-content');
-  if (content) content.innerHTML = renderMedContent(medicines, _medsView);
+  if (content) content.innerHTML = renderMedContent(list, _medsView);
   _checkHeaderBtn();
 }
 
@@ -219,12 +226,17 @@ function setMedView(view) {
   AppState.set('medsView', view);
   document.getElementById('view-grid-btn').classList.toggle('active', view === 'grid');
   document.getElementById('view-list-btn').classList.toggle('active', view === 'list');
-  document.getElementById('med-content').innerHTML = renderMedContent(AppState.get('medicines'), view);
+  document.getElementById('med-content').innerHTML = renderMedContent(AppState.get('medicines') || [], view);
 }
 
 function openAddMedModal(existingMed = null) {
-  const isEdit    = !!existingMed;
-  const occupied  = AppState.get('medicines')
+  /* Guard against event objects passed if called from event listeners */
+  if (existingMed && (existingMed instanceof Event || typeof existingMed.preventDefault === 'function')) {
+    existingMed = null;
+  }
+  const isEdit    = !!(existingMed && existingMed.id);
+  const currentMeds = AppState.get('medicines') || [];
+  const occupied  = currentMeds
     .filter(m => !isEdit || m.id !== existingMed.id)
     .map(m => m.compartment);
 
@@ -238,9 +250,9 @@ function openAddMedModal(existingMed = null) {
   ];
   const days = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
-  const selComp  = isEdit ? existingMed.compartment  : compartments.find(c => !occupied.includes(c)) || 'A';
-  const selFreq  = isEdit ? existingMed.frequency    : 'once-daily';
-  const selTimes = isEdit ? existingMed.times        : ['08:00'];
+  const selComp  = isEdit ? (existingMed.compartment || 'A') : compartments.find(c => !occupied.includes(c)) || 'A';
+  const selFreq  = isEdit ? (existingMed.frequency || 'once-daily') : 'once-daily';
+  const selTimes = isEdit ? (existingMed.times || ['08:00']) : ['08:00'];
   const selDays  = isEdit ? (existingMed.daysOfWeek || [0,1,2,3,4,5,6]) : [0,1,2,3,4,5,6];
 
   Modal.open(`

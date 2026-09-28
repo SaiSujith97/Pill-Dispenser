@@ -5,6 +5,9 @@
 let _medsView   = 'grid';
 let _medsUnsub  = null;
 
+// Mocking "import" from data.js without breaking classic script scope
+const { updateHardwareSchedule } = APP_DATA;
+
 function renderMedications() {
   _medsView = AppState.get('medsView') || 'grid';
 
@@ -455,6 +458,11 @@ function openAddMedModal(existingMed = null) {
       if (isDemoMode) {
         _refreshMedUI(AppState.get('medicines'));
       }
+
+      const angleMap = { 'A': 0, 'B': 45, 'C': 90, 'D': 135, 'E': 180 };
+      const selectedAngle = angleMap[selectedComp] !== undefined ? angleMap[selectedComp] : 0;
+      const selectedTime = times.length ? times[0] : '08:00';
+      await updateHardwareSchedule(selectedTime, selectedAngle);
     } catch (err) {
       console.error('Save medicine error:', err);
       Toast.show('Could not save. Please check your connection and try again.', 'error');

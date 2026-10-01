@@ -151,49 +151,79 @@ function _renderDashboardContent() {
     </div>
   </div>
 
-  <!-- Device Status -->
+  <!-- Device Status (live from Firestore) -->
   <div class="content-section">
-    <h2 class="section-title" style="margin-bottom:var(--space-3);">Device Status</h2>
-    <div class="card">
-      <div class="device-card">
-        <div class="device-icon" aria-hidden="true">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-        </div>
-        <div class="device-info">
-          <div class="device-name">${device.name || 'No device paired'}</div>
-          <div class="device-status">
-            <span class="status-dot ${device.connected ? '' : 'offline'}" aria-hidden="true"></span>
-            <span>${device.connected ? 'Connected' : 'Offline'}</span>
-            ${device.lastSync ? `&middot; Synced ${device.lastSync}` : ''}
-          </div>
-        </div>
-        <div style="text-align:right; flex-shrink:0;">
-          <div style="font-size:var(--text-sm); font-weight:600; color:${(device.battery||100) < 20 ? 'var(--danger)' : 'var(--text-primary)'}">
-            🔋 ${device.battery || '—'}%
-          </div>
-          <div style="font-size:var(--text-xs); color:var(--text-muted); margin-top:2px;">
-            v${device.firmware || '—'}
-          </div>
-        </div>
-      </div>
-
-      <!-- Compartment grid -->
-      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-2); margin-top:var(--space-4); padding-top:var(--space-4); border-top:1px solid var(--border-light);">
-        ${device.compartments ? Object.entries(device.compartments).map(([key, comp]) => {
-          const med = medicines.find(m => m.id === comp.medicineId);
-          return `
-          <div style="background:var(--bg-raised); border-radius:var(--radius-md); padding:var(--space-3); text-align:center;">
-            <div style="font-size:var(--text-xs); font-weight:700; color:${med ? med.color : 'var(--text-muted)'};">${key}</div>
-            <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">${med ? med.name : 'Empty'}</div>
-            <div style="font-size:10px; color:var(--text-muted);">${comp.pillCount} left</div>
-          </div>`;
-        }).join('') : '<div style="grid-column:1/-1; text-align:center; color:var(--text-muted); font-size:var(--text-sm); padding:var(--space-3);">Pair a device to see compartments</div>'}
-      </div>
+    <div class="section-header">
+      <h2 class="section-title" style="margin-bottom:var(--space-3);">Device Status</h2>
+      <a href="#dispenser" class="btn btn-ghost btn-sm">Control panel →</a>
+    </div>
+    <div class="card" id="db-device-card">
+      ${_renderDashboardDeviceCard(device)}
     </div>
   </div>
 
 </div>
   `;
+}
+
+/* ─── Dashboard Device Card ─── */
+function _renderDashboardDeviceCard(device) {
+  /* device = Firestore deviceStatus doc, or legacy APP_DATA mock, or null */
+  if (!device) {
+    return `<div class="device-card">
+      <div class="device-icon" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+      </div>
+      <div class="device-info">
+        <div class="device-name">No device paired</div>
+        <div class="device-status">
+          <span class="status-dot offline" aria-hidden="true"></span>
+          <span>Offline</span>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <a href="#dispenser" class="btn btn-secondary btn-sm">Set up device</a>
+      </div>
+    </div>`;
+  }
+
+  /* Determine online status from lastSeen timestamp */
+  const now      = Date.now();
+  const lastSeenMs = device.lastSeen?.toMillis ? device.lastSeen.toMillis()
+                   : (device.lastSeen?.seconds  ? device.lastSeen.seconds * 1000 : 0);
+  const isOnline = lastSeenMs > 0 && (now - lastSeenMs) < 90000;
+
+  const agoMs  = now - lastSeenMs;
+  const agoStr = lastSeenMs === 0 ? 'Never'
+    : agoMs < 60000   ? 'Just now'
+    : agoMs < 3600000 ? `${Math.floor(agoMs/60000)} min ago`
+    : `${Math.floor(agoMs/3600000)} hr ago`;
+
+  const statusLabel = device.status === 'dispensing' ? 'Dispensing…'
+                    : isOnline ? 'Connected' : 'Offline';
+
+  return `<div class="device-card">
+    <div class="device-icon" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+    </div>
+    <div class="device-info">
+      <div class="device-name">ESP32 Pill Dispenser${device.id ? ' · ' + device.id : ''}</div>
+      <div class="device-status">
+        <span class="status-dot ${isOnline ? '' : 'offline'}" aria-hidden="true"></span>
+        <span>${statusLabel}</span>
+        &middot; Synced ${agoStr}
+      </div>
+      ${device.firmwareVersion ? `<div style="font-size:var(--text-xs);color:var(--text-muted);margin-top:2px;">v${device.firmwareVersion}</div>` : ''}
+    </div>
+    <div style="text-align:right;flex-shrink:0;">
+      <div style="font-size:var(--text-sm);font-weight:600;color:${isOnline ? 'var(--success)' : 'var(--danger)'}">
+        ${isOnline ? '🟢 Online' : '🔴 Offline'}
+      </div>
+      <div style="font-size:var(--text-xs);color:var(--text-muted);margin-top:2px;">
+        Comp. ${device.currentCompartment ?? '—'}
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderTimeline(schedule, medicines) {
@@ -287,6 +317,22 @@ async function initDashboard() {
   });
 
   AppState.registerListener('dashboard-schedule', unsub);
+
+  /* Subscribe to real ESP32 device status */
+  const profile  = AppState.get('userProfile');
+  const deviceId = profile?.deviceId || null;
+  if (deviceId) {
+    const deviceUnsub = FirebaseDB.getDeviceStatus(deviceId, (err, deviceDoc) => {
+      if (err) return;
+      /* Update AppState so the card re-renders on next dashboard refresh */
+      AppState.set('device', deviceDoc || {});
+      /* Patch the card in-place without full re-render */
+      const card = document.getElementById('db-device-card');
+      if (card) card.innerHTML = _renderDashboardDeviceCard(deviceDoc);
+    });
+    AppState.registerListener('dashboard-device', deviceUnsub);
+  }
+
   _dashboardTimer = setInterval(_updateCountdown, 30000);
 }
 
@@ -466,4 +512,5 @@ function cleanupDashboard() {
   clearInterval(_dashboardTimer);
   _dashboardTimer = null;
   AppState.unregisterListener('dashboard-schedule');
+  AppState.unregisterListener('dashboard-device');
 }

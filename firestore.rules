@@ -7,18 +7,23 @@
 //   …or paste into Firebase Console → Firestore Database → Rules tab.
 //
 // STRUCTURE:
-//   users/{uid}                         — User profile document
-//   users/{uid}/medicines/{medId}       — Medicine catalog per user
-//   users/{uid}/schedule/{date}/doses/{doseId}  — Daily dose entries
+//   users/{uid}                                    — User profile document
+//   users/{uid}/medicines/{medId}                  — Medicine catalog per user
+//   users/{uid}/schedule/{date}/doses/{doseId}     — Daily dose entries
+//   users/{uid}/dispenseCommands/{commandId}       — ESP32 dispense commands
+//   deviceStatus/{deviceId}                        — ESP32 device heartbeat
 //
 // RULE SUMMARY:
-//   1. users/{uid}          — read/write only by the authenticated owner
-//   2. medicines subcoll.   — read/write only by the authenticated owner
-//   3. schedule subcoll.    — read/write only by the authenticated owner
-//   4. Caregiver access     — read-only for a caregiver whose email is stored
-//                             in the patient's caregiverEmail field.
-//                             (Write access is NEVER granted to caregivers.)
-//   5. Everything else      — deny by default (explicit deny-all at bottom)
+//   1. users/{uid}                 — read/write only by the authenticated owner
+//   2. medicines subcoll.          — read/write only by the authenticated owner
+//   3. schedule subcoll.           — read/write only by the authenticated owner
+//   4. dispenseCommands subcoll.   — read/write by owner; ESP32 writes status back
+//                                    using its own anonymous UID stored in the doc
+//   5. deviceStatus/{deviceId}     — readable by the device owner
+//                                    writable by the ESP32 (anon uid = device.uid)
+//   6. Caregiver access            — read-only for a caregiver whose email is stored
+//                                    in the patient's caregiverEmail field.
+//   7. Everything else             — deny by default (explicit deny-all at bottom)
 // ═══════════════════════════════════════════════════════════════
 
 rules_version = '2';
@@ -31,8 +36,6 @@ service cloud.firestore {
     }
 
     // ─── Helper: is the requester a linked caregiver for this patient? ─
-    // Reads the patient's profile and checks if the caregiver's email
-    // matches the stored caregiverEmail field.
     function isCaregiverOf(uid) {
       return request.auth != null
         && exists(/databases/$(database)/documents/users/$(uid))
@@ -63,6 +66,9 @@ service cloud.firestore {
       // 3. Schedule + Dose History: users/{uid}/schedule/{date}/doses/{doseId}
       //    Owner: full read + write (mark taken, skip, etc.)
       //    Caregiver: read-only (to monitor adherence)
+      //    ESP32:  write-only via anonymous auth (updates status to "dispensed")
+      //            The ESP32's anonymous UID must match deviceStatus.uid for
+      //            the device associated with this user.
       //    NOTE: {date} wildcard also covers the parent doc itself.
       // ───────────────────────────────────────────────────────────────
       match /schedule/{date} {
@@ -71,15 +77,74 @@ service cloud.firestore {
 
         match /doses/{doseId} {
           allow read:  if isOwner(uid) || isCaregiverOf(uid);
-          allow write: if isOwner(uid);
+          // Owner can write anything; ESP32 (anon) can only update status fields
+          allow write: if isOwner(uid)
+            || (request.auth != null
+                && request.auth.uid == get(/databases/$(database)/documents/deviceStatus/$(request.resource.data.deviceId)).data.uid
+                && request.resource.data.keys().hasOnly(['status','takenAt','dispensedByESP32','executionId']));
         }
+      }
+
+      // ───────────────────────────────────────────────────────────────
+      // 4. Dispense Commands: users/{uid}/dispenseCommands/{commandId}
+      //    Owner: full read + write (to send commands from the website)
+      //    ESP32: read + limited write (update status/result/executedAt only)
+      //           The ESP32 is identified by its anonymous Firebase UID
+      //           stored in the linked deviceStatus document.
+      // ───────────────────────────────────────────────────────────────
+      match /dispenseCommands/{commandId} {
+        allow read:  if isOwner(uid)
+          || (request.auth != null
+              && exists(/databases/$(database)/documents/deviceStatus/$(resource.data.deviceId))
+              && get(/databases/$(database)/documents/deviceStatus/$(resource.data.deviceId)).data.uid == request.auth.uid);
+
+        // Owner can create/delete commands
+        allow create, delete: if isOwner(uid);
+
+        // Owner OR ESP32 (device uid) can update, but ESP32 is restricted to status fields
+        allow update: if isOwner(uid)
+          || (request.auth != null
+              && resource.data.get('deviceId', '') != ''
+              && exists(/databases/$(database)/documents/deviceStatus/$(resource.data.deviceId))
+              && get(/databases/$(database)/documents/deviceStatus/$(resource.data.deviceId)).data.uid == request.auth.uid
+              && request.resource.data.keys().hasOnly(['status','result','executedAt']));
       }
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 4. Deny everything else by default (belt-and-suspenders)
-    //    Any path not matched above is implicitly denied, but being
-    //    explicit here makes the intent clear during review.
+    // 5. Device Status: deviceStatus/{deviceId}
+    //    Created by: website owner (to register the device)
+    //    Read:  by the device owner (authenticated user)
+    //    Write: by the ESP32 itself (anonymous UID = deviceStatus.uid)
+    //           OR by the owner (to register/update device info)
+    // ─────────────────────────────────────────────────────────────────
+    match /deviceStatus/{deviceId} {
+      // Owner of this device can read/write
+      allow read:  if request.auth != null
+        && (resource == null || resource.data.ownerUid == request.auth.uid);
+
+      // New doc: only authenticated users can create (to register their device)
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid;
+
+      // Existing doc: owner can update anything; ESP32 (anon) can update heartbeat fields
+      allow update: if request.auth != null
+        && (
+          // The human owner
+          resource.data.ownerUid == request.auth.uid
+          // OR the ESP32 itself (its anonymous UID is stored in the doc)
+          || (resource.data.uid == request.auth.uid
+              && request.resource.data.keys().hasOnly([
+                'online','lastSeen','currentCompartment',
+                'status','lastDispense','wifiRSSI','firmwareVersion','updatedAt'
+              ]))
+        );
+
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 6. Deny everything else by default (belt-and-suspenders)
     // ─────────────────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

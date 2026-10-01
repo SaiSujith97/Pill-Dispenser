@@ -63,17 +63,20 @@ const AppState = (() => {
 
   /* ─── Bootstrap from mock data (demo mode only) ─── */
   function init() {
-    /* Keep device info from mock even in real mode (until IoT layer added) */
     const data = APP_DATA;
-    _state.device   = { ...data.device };
-    _state.reminders = [...data.reminders];
+    _state.reminders       = [...data.reminders];
     _state.unreadReminders = data.reminders.filter(r => !r.acknowledged).length;
 
-    /* In demo mode, also load mock medicines + schedule */
     if (_state.isDemoMode) {
+      /* Demo mode: load all mock data including device */
+      _state.device        = { ...data.device };
       _state.medicines     = [...data.medicines];
       _state.todaySchedule = [...data.todaySchedule];
       _state.history       = [...data.history];
+    } else {
+      /* Real mode: device state comes from Firestore deviceStatus listener.
+         Start with null; dashboard.js will subscribe and fill it in. */
+      _state.device = null;
     }
   }
 

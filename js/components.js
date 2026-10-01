@@ -5,11 +5,15 @@
 
 /* ─── Status helpers ─── */
 const StatusConfig = {
-  taken:    { label: 'Taken',    icon: '✓', cssClass: 'badge-taken',    dotClass: 'dot-taken',    emoji: '✅' },
-  missed:   { label: 'Missed',   icon: '✕', cssClass: 'badge-missed',   dotClass: 'dot-missed',   emoji: '❌' },
-  upcoming: { label: 'Upcoming', icon: '◷', cssClass: 'badge-upcoming', dotClass: 'dot-upcoming', emoji: '🕐' },
-  late:     { label: 'Late',     icon: '⚠', cssClass: 'badge-late',     dotClass: 'dot-late',     emoji: '⚠️' },
-  skipped:  { label: 'Skipped',  icon: '—', cssClass: 'badge-skipped',  dotClass: '',             emoji: '⏭' },
+  taken:      { label: 'Taken',      icon: '✓', cssClass: 'badge-taken',      dotClass: 'dot-taken',    emoji: '✅' },
+  missed:     { label: 'Missed',     icon: '✕', cssClass: 'badge-missed',     dotClass: 'dot-missed',   emoji: '❌' },
+  upcoming:   { label: 'Upcoming',   icon: '◷', cssClass: 'badge-upcoming',   dotClass: 'dot-upcoming', emoji: '🕐' },
+  late:       { label: 'Late',       icon: '⚠', cssClass: 'badge-late',       dotClass: 'dot-late',     emoji: '⚠️' },
+  skipped:    { label: 'Skipped',    icon: '—', cssClass: 'badge-skipped',    dotClass: '',             emoji: '⏭' },
+  /* ESP32 dispenser statuses */
+  dispensed:  { label: 'Dispensed',  icon: '💊', cssClass: 'badge-taken',     dotClass: 'dot-taken',    emoji: '💊' },
+  dispensing: { label: 'Dispensing', icon: '⚙', cssClass: 'badge-upcoming',  dotClass: 'dot-upcoming', emoji: '⚙️' },
+  due:        { label: 'Due',        icon: '🔔', cssClass: 'badge-late',      dotClass: 'dot-late',     emoji: '🔔' },
 };
 
 function getStatusBadge(status) {

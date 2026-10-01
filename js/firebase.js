@@ -35,6 +35,8 @@ import {
   getDocs,
   serverTimestamp,
   Timestamp,
+  limit,
+  writeBatch,
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
 /* ─── Config (do not modify) ─── */
@@ -300,6 +302,138 @@ window.FirebaseDB = {
     fetchAll();
     /* Return a no-op unsubscribe for the static history */
     return () => {};
+  },
+
+  /* ═══════════════════════════════════════════════════════════
+     ESP32 DEVICE STATUS
+     Collection: deviceStatus/{deviceId}
+     ═══════════════════════════════════════════════════════════ */
+
+  /**
+   * Real-time listener for the ESP32 device status document.
+   * ESP32 writes to this doc; website reads it.
+   * @param {string} deviceId   e.g. "ESP32-A4F2"
+   * @param {Function} callback (err, deviceData | null)
+   * @returns unsubscribe function
+   */
+  getDeviceStatus(deviceId, callback) {
+    if (!deviceId) { callback(null, null); return () => {}; }
+    const ref = doc(db, 'deviceStatus', deviceId);
+    return onSnapshot(ref, (snap) => {
+      callback(null, snap.exists() ? { id: snap.id, ...snap.data() } : null);
+    }, (err) => {
+      console.error('getDeviceStatus error:', err);
+      callback(err, null);
+    });
+  },
+
+  /**
+   * Write/update the device status document (called by ESP32 via REST,
+   * and also by the website to initialise the document).
+   */
+  async upsertDeviceStatus(deviceId, data) {
+    const ref = doc(db, 'deviceStatus', deviceId);
+    await setDoc(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+  },
+
+  /* ═══════════════════════════════════════════════════════════
+     DISPENSE COMMANDS  (website → ESP32)
+     Collection: users/{uid}/dispenseCommands/{commandId}
+     ═══════════════════════════════════════════════════════════ */
+
+  /**
+   * Send a manual dispense command from the website.
+   * The ESP32 polls/listens for pending commands and executes them.
+   *
+   * @param {string} uid
+   * @param {Object} payload
+   *   compartment {number}  1-7
+   *   dosage      {number}  number of pills
+   *   medicineId  {string}  (optional)
+   *   medicineName{string}  (optional)
+   * @returns {string} commandId
+   */
+  async sendDispenseCommand(uid, payload) {
+    const col = collection(db, 'users', uid, 'dispenseCommands');
+    const executionId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const ref = await addDoc(col, {
+      type:         'manual',
+      compartment:  payload.compartment,
+      dosage:       payload.dosage || 1,
+      medicineId:   payload.medicineId   || '',
+      medicineName: payload.medicineName || '',
+      executionId,
+      status:       'pending',
+      createdAt:    serverTimestamp(),
+      executedAt:   null,
+      result:       null,
+    });
+    return ref.id;
+  },
+
+  /**
+   * Real-time listener for the last N dispense commands.
+   * Website uses this to show command history + live status.
+   * @param {string} uid
+   * @param {Function} callback (err, commands[])
+   * @returns unsubscribe function
+   */
+  listenDispenseCommands(uid, callback, limitCount = 10) {
+    const col = collection(db, 'users', uid, 'dispenseCommands');
+    const q   = query(col, orderBy('createdAt', 'desc'), limit(limitCount));
+    return onSnapshot(q, (snap) => {
+      const commands = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      callback(null, commands);
+    }, (err) => {
+      console.error('listenDispenseCommands error:', err);
+      callback(err, []);
+    });
+  },
+
+  /**
+   * Update a dispense command's status.
+   * Called by the website if needed, or by ESP32 via REST.
+   */
+  async updateDispenseCommandStatus(uid, commandId, status, result = null) {
+    const ref = doc(db, 'users', uid, 'dispenseCommands', commandId);
+    const data = { status };
+    if (result !== null) data.result = result;
+    if (status === 'executing' || status === 'done' || status === 'failed') {
+      data.executedAt = serverTimestamp();
+    }
+    await updateDoc(ref, data);
+  },
+
+  /**
+   * Mark a dose as dispensed by the ESP32.
+   * Updates the existing dose document in the daily schedule.
+   * @param {string} uid
+   * @param {string} dateStr  YYYY-MM-DD
+   * @param {string} doseId
+   * @param {string} executionId
+   */
+  async markDoseDispensed(uid, dateStr, doseId, executionId) {
+    const now = new Date();
+    const takenAt = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const ref = doc(db, 'users', uid, 'schedule', dateStr, 'doses', doseId);
+    await updateDoc(ref, {
+      status:           'dispensed',
+      takenAt,
+      dispensedByESP32: true,
+      executionId,
+    });
+  },
+
+  /**
+   * Get all pending dispense commands for the ESP32 to process.
+   * (The ESP32 uses the REST API directly, but this helper is available
+   *  for testing/debugging from the browser console.)
+   */
+  async getPendingDispenseCommands(uid) {
+    const col = collection(db, 'users', uid, 'dispenseCommands');
+    const q   = query(col, where('status', '==', 'pending'), orderBy('createdAt', 'asc'));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   },
 };
 

@@ -13,6 +13,7 @@ const Router = (() => {
     schedule:    () => typeof cleanupSchedule    === 'function' && cleanupSchedule(),
     settings:    () => typeof cleanupSettings    === 'function' && cleanupSettings(),
     medications: () => typeof cleanupMedications === 'function' && cleanupMedications(),
+    dispenser:   () => typeof cleanupDispenser   === 'function' && cleanupDispenser(),
   };
 
   /* Page render + init mapping */
@@ -26,6 +27,7 @@ const Router = (() => {
     reminders:   { render: renderReminders,   init: initReminders,   title: 'Reminders' },
     caregiver:   { render: renderCaregiver,   init: initCaregiver,   title: 'Caregiver View' },
     settings:    { render: renderSettings,    init: initSettings,    title: 'Settings' },
+    dispenser:   { render: renderDispenser,   init: initDispenser,   title: 'Dispenser Control' },
   };
 
   let _currentPage = null;

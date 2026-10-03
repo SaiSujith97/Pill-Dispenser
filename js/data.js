@@ -305,6 +305,16 @@ const APP_DATA = (() => {
     return days;
   }
 
+  async function updateHardwareSchedule(timeString, compartmentAngle) {
+    const { getFirestore, doc, setDoc } = await import("https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js");
+    const { getApp } = await import("https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js");
+    const db = getFirestore(getApp());
+    await setDoc(doc(db, "schedule", "activeAlarm"), {
+      time: timeString,
+      angle: parseInt(compartmentAngle, 10)
+    });
+  }
+
   return {
     medicines,
     todaySchedule,
@@ -313,5 +323,6 @@ const APP_DATA = (() => {
     users,
     device,
     getWeeklyAdherence,
+    updateHardwareSchedule,
   };
 })();
